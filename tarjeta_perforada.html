@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IBM 80 — Simulador de Tarjeta Perforada</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0e0f;
+    --panel:     #0f1617;
+    --card-bg:   #f5f0e8;
+    --card-line: #d4c9a8;
+    --hole-empty:#e8e0cc;
+    --hole-punch:#1a1a1a;
+    --green:     #00ff9d;
+    --green-dim: #00cc7a;
+    --amber:     #ffb300;
+    --amber-dim: #cc8e00;
+    --cyan:      #00d4ff;
+    --red:       #ff4757;
+    --border:    #1e2e30;
+    --text:      #c8d8da;
+    --text-dim:  #5a7a7e;
+    --font-mono: 'Share Tech Mono', monospace;
+    --font-hud:  'Orbitron', monospace;
+    --font-vt:   'VT323', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanlines overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* CRT vignette */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.6) 100%);
+    pointer-events: none;
+    z-index: 9998;
+  }
+
+  /* ─── HEADER ─────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(90deg, #0c1415 0%, #0f1a1c 50%, #0c1415 100%);
+    position: relative;
+  }
+  header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--green), transparent);
+  }
+  .logo {
+    font-family: var(--font-hud);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: var(--green);
+    text-shadow: 0 0 12px var(--green);
+  }
+  .logo span { color: var(--text-dim); font-weight: 400; }
+  .status-bar {
+    display: flex;
+    gap: 20px;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+  }
+  .status-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    margin-right: 6px;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity:1; } 50% { opacity:0.3; }
+  }
+
+  /* ─── MAIN LAYOUT ────────────────────────────────────────── */
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ─── SECTION LABEL ──────────────────────────────────────── */
+  .section-label {
+    font-family: var(--font-hud);
+    font-size: 9px;
+    letter-spacing: 4px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ─── CONTROL PANEL ──────────────────────────────────────── */
+  .control-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 12px;
+    align-items: end;
+  }
+  .input-group { display: flex; flex-direction: column; gap: 6px; }
+  .input-group label {
+    font-size: 9px;
+    letter-spacing: 3px;
+    color: var(--text-dim);
+    font-family: var(--font-hud);
+  }
+  #texto-input {
+    background: #060b0c;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--green);
+    font-family: var(--font-mono);
+    font-size: 18px;
+    padding: 10px 14px;
+    outline: none;
+    transition: border-color .2s, box-shadow .2s;
+    width: 100%;
+    caret-color: var(--green);
+  }
+  #texto-input:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 0 2px rgba(0,255,157,0.1), inset 0 0 20px rgba(0,255,157,0.03);
+  }
+  #texto-input::placeholder { color: #2a4a4e; }
+  #char-counter {
+    font-size: 9px;
+    color: var(--text-dim);
+    text-align: right;
+    letter-spacing: 1px;
+  }
+  #char-counter.over { color: var(--red); }
+
+  .btn {
+    font-family: var(--font-hud);
+    font-size: 9px;
+    letter-spacing: 2px;
+    font-weight: 700;
+    padding: 12px 20px;
+    border: 1px solid;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all .15s;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .btn-green {
+    background: rgba(0,255,157,0.08);
+    border-color: var(--green);
+    color: var(--green);
+    text-shadow: 0 0 8px var(--green);
+    box-shadow: inset 0 0 20px rgba(0,255,157,0.05);
+  }
+  .btn-green:hover {
+    background: rgba(0,255,157,0.18);
+    box-shadow: 0 0 16px rgba(0,255,157,0.3), inset 0 0 20px rgba(0,255,157,0.1);
+  }
+  .btn-green:active { transform: scale(0.97); }
+  .btn-amber {
+    background: rgba(255,179,0,0.08);
+    border-color: var(--amber);
+    color: var(--amber);
+  }
+  .btn-amber:hover { background: rgba(255,179,0,0.15); box-shadow: 0 0 12px rgba(255,179,0,0.25); }
+  .btn-cyan {
+    background: rgba(0,212,255,0.08);
+    border-color: var(--cyan);
+    color: var(--cyan);
+  }
+  .btn-cyan:hover { background: rgba(0,212,255,0.15); box-shadow: 0 0 12px rgba(0,212,255,0.25); }
+
+  /* ─── TARJETA PERFORADA ───────────────────────────────────── */
+  .card-wrapper {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    overflow-x: auto;
+  }
+  .card-container {
+    position: relative;
+    background: var(--card-bg);
+    border-radius: 6px 2px 2px 2px;
+    padding: 10px 12px 12px;
+    min-width: 900px;
+    box-shadow:
+      0 0 0 1px #b0a080,
+      0 4px 20px rgba(0,0,0,0.6),
+      0 0 40px rgba(0,255,157,0.04);
+    font-family: var(--font-mono);
+  }
+
+  /* Corner cut */
+  .card-container::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 0; height: 0;
+    border-style: solid;
+    border-width: 24px 24px 0 0;
+    border-color: #8a7a60 transparent transparent transparent;
+  }
+
+  /* Top text strip */
+  .card-text-strip {
+    display: flex;
+    padding: 2px 26px 4px;
+    gap: 0;
+    border-bottom: 1px solid var(--card-line);
+    margin-bottom: 6px;
+    min-height: 20px;
+    overflow: hidden;
+  }
+  .card-char {
+    font-size: 9px;
+    color: #4a3a20;
+    width: 10.6px;
+    text-align: center;
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    letter-spacing: 0;
+  }
+
+  /* Row labels + holes grid */
+  .card-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .card-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+  .row-label {
+    font-size: 8px;
+    color: #6a5a40;
+    width: 22px;
+    text-align: right;
+    padding-right: 4px;
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+  }
+  .holes-row {
+    display: flex;
+    gap: 0;
+  }
+  .hole {
+    width: 10.6px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background .1s;
+  }
+  .hole-inner {
+    width: 6px;
+    height: 10px;
+    border-radius: 2px;
+    background: var(--hole-empty);
+    border: 1px solid #c0b090;
+    transition: all .12s;
+  }
+  .hole.punched .hole-inner {
+    background: var(--hole-punch);
+    border-color: #0a0a0a;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.8), 0 0 4px rgba(0,0,0,0.4);
+  }
+  .hole:hover .hole-inner {
+    border-color: #888;
+    transform: scale(1.1);
+  }
+
+  /* Column numbers bottom */
+  .col-numbers {
+    display: flex;
+    padding-left: 22px;
+    margin-top: 4px;
+  }
+  .col-num {
+    width: 10.6px;
+    font-size: 7px;
+    color: #8a7a60;
+    text-align: center;
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+  }
+  .col-num.ten { color: #5a4a30; font-size: 8px; font-weight: bold; }
+
+  /* IBM branding */
+  .card-brand {
+    position: absolute;
+    bottom: 8px;
+    right: 14px;
+    font-family: var(--font-hud);
+    font-size: 8px;
+    letter-spacing: 3px;
+    color: #8a7a60;
+  }
+
+  /* ─── BOTTOM PANELS ──────────────────────────────────────── */
+  .bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .info-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 18px;
+  }
+  .binary-display {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--cyan);
+    line-height: 1.8;
+    word-break: break-all;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 10px;
+    background: #060b0c;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+  .binary-display::-webkit-scrollbar { width: 4px; }
+  .binary-display::-webkit-scrollbar-track { background: #060b0c; }
+  .binary-display::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .hollerith-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .hollerith-table th {
+    font-family: var(--font-hud);
+    font-size: 8px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .hollerith-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid rgba(30,46,48,0.5);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    vertical-align: middle;
+  }
+  .hollerith-table tr:hover td { background: rgba(0,255,157,0.03); }
+  .col-char { color: var(--green); font-size: 14px; font-weight: bold; }
+  .col-ascii { color: var(--amber); }
+  .col-hollerith { color: var(--cyan); font-size: 10px; letter-spacing: 1px; }
+  .col-binary { color: var(--text-dim); font-size: 10px; }
+
+  .table-wrapper {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .table-wrapper::-webkit-scrollbar { width: 4px; }
+  .table-wrapper::-webkit-scrollbar-track { background: transparent; }
+  .table-wrapper::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ─── DECODE SECTION ─────────────────────────────────────── */
+  .decode-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+  }
+  .decode-result {
+    font-family: var(--font-vt);
+    font-size: 32px;
+    color: var(--amber);
+    letter-spacing: 4px;
+    min-height: 50px;
+    text-shadow: 0 0 10px rgba(255,179,0,0.4);
+    padding: 10px 14px;
+    background: #060b0c;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    word-break: break-all;
+  }
+
+  /* ─── FOOTER ─────────────────────────────────────────────── */
+  footer {
+    text-align: center;
+    padding: 16px;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    font-family: var(--font-hud);
+  }
+
+  /* ─── ANIMATIONS ─────────────────────────────────────────── */
+  @keyframes punchAnim {
+    0%   { transform: scale(1.3); background: var(--green); }
+    100% { transform: scale(1);   background: var(--hole-punch); }
+  }
+  .hole.just-punched .hole-inner { animation: punchAnim .2s ease-out forwards; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .fade-in { animation: fadeIn .3s ease forwards; }
+
+  /* ─── TOAST ──────────────────────────────────────────────── */
+  #toast {
+    position: fixed;
+    bottom: 30px; right: 30px;
+    background: var(--panel);
+    border: 1px solid var(--green);
+    color: var(--green);
+    font-family: var(--font-hud);
+    font-size: 10px;
+    letter-spacing: 2px;
+    padding: 12px 20px;
+    border-radius: 3px;
+    box-shadow: 0 0 20px rgba(0,255,157,0.2);
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all .3s;
+    pointer-events: none;
+    z-index: 1000;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+
+  /* ─── RESPONSIVE ─────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .control-panel { grid-template-columns: 1fr; }
+    .bottom-grid { grid-template-columns: 1fr; }
+    header { flex-direction: column; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">IBM <span>PUNCHED CARD</span> SIMULATOR <span>// 80 COL</span></div>
+  <div class="status-bar">
+    <span><span class="status-dot"></span>SISTEMA ACTIVO</span>
+    <span id="hdr-cols">COLS: 00/80</span>
+    <span id="hdr-mode">MODO: EDICIÓN</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- INPUT CONTROLS -->
+  <div>
+    <div class="section-label">// ENTRADA DE DATOS</div>
+    <div class="control-panel">
+      <div class="input-group">
+        <label>Texto a codificar (máx. 80 caracteres)</label>
+        <input type="text" id="texto-input" maxlength="80"
+               placeholder="INGRESE TEXTO AQUÍ... EJ: HOLA MUNDO 2026"
+               autocomplete="off" spellcheck="false">
+        <div id="char-counter">0 / 80</div>
+      </div>
+      <button class="btn btn-green" onclick="perforar()">▶ PERFORAR</button>
+      <button class="btn btn-amber" onclick="limpiar()">◼ LIMPIAR</button>
+      <button class="btn btn-cyan" onclick="exportar()">↓ EXPORTAR</button>
+    </div>
+  </div>
+
+  <!-- PUNCHED CARD VISUAL -->
+  <div>
+    <div class="section-label">// TARJETA PERFORADA IBM — 80 COLUMNAS × 12 FILAS</div>
+    <div class="card-wrapper">
+      <div class="card-container" id="card">
+        <!-- Text strip -->
+        <div class="card-text-strip" id="text-strip"></div>
+        <!-- Hole grid -->
+        <div class="card-grid" id="card-grid"></div>
+        <!-- Column numbers -->
+        <div class="col-numbers" id="col-numbers"></div>
+        <div class="card-brand">IBM · 80-COLUMN</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM INFO -->
+  <div class="bottom-grid">
+    <!-- Binary output -->
+    <div class="info-panel">
+      <div class="section-label">// SALIDA BINARIA (ASCII)</div>
+      <div class="binary-display" id="binary-output">
+        <span style="color:var(--text-dim)">[ En espera de entrada... ]</span>
+      </div>
+    </div>
+    <!-- Hollerith table -->
+    <div class="info-panel">
+      <div class="section-label">// TABLA DE CODIFICACIÓN HOLLERITH</div>
+      <div class="table-wrapper">
+        <table class="hollerith-table">
+          <thead>
+            <tr>
+              <th>CHAR</th>
+              <th>ASCII</th>
+              <th>HOLLERITH</th>
+              <th>BINARIO</th>
+            </tr>
+          </thead>
+          <tbody id="hollerith-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- DECODE OUTPUT -->
+  <div class="decode-panel">
+    <div class="section-label">// DECODIFICACIÓN — TEXTO RECUPERADO DESDE PERFORACIONES</div>
+    <div class="decode-result" id="decode-output">_</div>
+  </div>
+
+</main>
+
+<footer>
+  SIMULADOR DE TARJETA PERFORADA IBM 80 COL &nbsp;·&nbsp;
+  JOHAN SILVA · JULIÁN BELTRÁN · DIEGO PLATA &nbsp;·&nbsp;
+  CODIFICACIÓN HOLLERITH 1928 &nbsp;·&nbsp; MARZO 2026
+</footer>
+
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CODIFICACIÓN HOLLERITH — IBM 80 COLUMNAS
+// Filas: Y(12), X(11), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+// Índices en el array de filas: 0=Y, 1=X, 2=0, 3=1 ... 11=9
+// ═══════════════════════════════════════════════════════════════
+
+const ROW_LABELS = ['Y(12)', 'X(11)', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+const NUM_ROWS = 12;
+const NUM_COLS = 80;
+
+// Hollerith encoding: char -> array of row indices punched
+// Based on IBM 026/029 keypunch encoding
+const HOLLERITH = {
+  ' ': [],
+  'A': [0,3],   'B': [0,4],   'C': [0,5],   'D': [0,6],   'E': [0,7],
+  'F': [0,8],   'G': [0,9],   'H': [0,10],  'I': [0,11],
+  'J': [1,3],   'K': [1,4],   'L': [1,5],   'M': [1,6],   'N': [1,7],
+  'O': [1,8],   'P': [1,9],   'Q': [1,10],  'R': [1,11],
+  'S': [2,3],   'T': [2,4],   'U': [2,5],   'V': [2,6],   'W': [2,7],
+  'X': [2,8],   'Y': [2,9],   'Z': [2,10],
+  '0': [2],     '1': [3],     '2': [4],     '3': [5],     '4': [6],
+  '5': [7],     '6': [8],     '7': [9],     '8': [10],    '9': [11],
+  '&': [0],     '-': [1],     '.': [0,4,8], ',': [1,4,8], '(': [0,5,8],
+  ')': [1,5,8], '+': [0,6,8], '$': [0,3,8], '*': [1,6,8], '/': [2,3,8],
+  '%': [2,4,8], '=': [1,7,8], "'": [0,2,8], '"': [0,1,8], '?': [0,3,9],
+  '!': [1,2,8], '#': [2,5,8], '@': [1,3,8], '^': [0,3,10],'_': [1,0],
+};
+
+// State: 2D array [row][col] of punched booleans
+let punchState = Array.from({length: NUM_ROWS}, () => new Array(NUM_COLS).fill(false));
+let currentText = '';
+
+// ── BUILD CARD UI ────────────────────────────────────────────
+function buildCard() {
+  // Text strip
+  const strip = document.getElementById('text-strip');
+  strip.innerHTML = '';
+  // Padding for corner cut (26px ~ 2.5 chars)
+  for (let i = 0; i < NUM_COLS; i++) {
+    const span = document.createElement('span');
+    span.className = 'card-char';
+    span.id = `tc-${i}`;
+    span.textContent = ' ';
+    strip.appendChild(span);
+  }
+
+  // Grid rows
+  const grid = document.getElementById('card-grid');
+  grid.innerHTML = '';
+  for (let r = 0; r < NUM_ROWS; r++) {
+    const row = document.createElement('div');
+    row.className = 'card-row';
+
+    const lbl = document.createElement('span');
+    lbl.className = 'row-label';
+    lbl.textContent = ROW_LABELS[r];
+    row.appendChild(lbl);
+
+    const holesRow = document.createElement('div');
+    holesRow.className = 'holes-row';
+    for (let c = 0; c < NUM_COLS; c++) {
+      const hole = document.createElement('div');
+      hole.className = 'hole';
+      hole.id = `h-${r}-${c}`;
+      const inner = document.createElement('div');
+      inner.className = 'hole-inner';
+      hole.appendChild(inner);
+      // Click to manually toggle
+      hole.addEventListener('click', () => toggleHole(r, c));
+      holesRow.appendChild(hole);
+    }
+    row.appendChild(holesRow);
+    grid.appendChild(row);
+  }
+
+  // Column numbers
+  const colNums = document.getElementById('col-numbers');
+  colNums.innerHTML = '';
+  for (let c = 0; c < NUM_COLS; c++) {
+    const n = document.createElement('span');
+    n.className = 'col-num' + ((c+1) % 10 === 0 ? ' ten' : '');
+    n.textContent = (c+1) % 10 === 0 ? (c+1) : (c+1) % 10;
+    colNums.appendChild(n);
+  }
+}
+
+// ── TOGGLE HOLE MANUALLY ─────────────────────────────────────
+function toggleHole(r, c) {
+  punchState[r][c] = !punchState[r][c];
+  updateHoleUI(r, c, false);
+  decodeFromCard();
+  updateBinaryOutput();
+  updateHollerithTable();
+}
+
+// ── UPDATE HOLE VISUALS ──────────────────────────────────────
+function updateHoleUI(r, c, animate = true) {
+  const hole = document.getElementById(`h-${r}-${c}`);
+  if (!hole) return;
+  if (punchState[r][c]) {
+    hole.classList.add('punched');
+    if (animate) {
+      hole.classList.add('just-punched');
+      setTimeout(() => hole.classList.remove('just-punched'), 250);
+    }
+  } else {
+    hole.classList.remove('punched');
+  }
+}
+
+// ── PERFORAR TEXTO ───────────────────────────────────────────
+function perforar() {
+  const input = document.getElementById('texto-input');
+  const text = input.value.toUpperCase().slice(0, 80);
+
+  if (!text.trim()) { showToast('INGRESE TEXTO PRIMERO'); return; }
+
+  // Reset state
+  punchState = Array.from({length: NUM_ROWS}, () => new Array(NUM_COLS).fill(false));
+
+  // Encode each character
+  for (let c = 0; c < text.length; c++) {
+    const ch = text[c];
+    const rows = HOLLERITH[ch] || HOLLERITH[' '];
+    rows.forEach(r => { punchState[r][c] = true; });
+    // Update text strip
+    const tc = document.getElementById(`tc-${c}`);
+    if (tc) tc.textContent = ch;
+  }
+  // Clear unused columns
+  for (let c = text.length; c < NUM_COLS; c++) {
+    const tc = document.getElementById(`tc-${c}`);
+    if (tc) tc.textContent = ' ';
+  }
+
+  // Animate holes sequentially
+  let delay = 0;
+  for (let c = 0; c < NUM_COLS; c++) {
+    for (let r = 0; r < NUM_ROWS; r++) {
+      if (punchState[r][c]) {
+        const col = c, row = r;
+        setTimeout(() => updateHoleUI(row, col, true), delay);
+        delay += 8;
+      } else {
+        updateHoleUI(r, c, false);
+      }
+    }
+  }
+
+  currentText = text;
+  setTimeout(() => {
+    updateBinaryOutput();
+    updateHollerithTable();
+    decodeFromCard();
+    updateHeader(text.length);
+  }, delay + 50);
+
+  showToast(`PERFORANDO ${text.length} COLUMNAS...`);
+}
+
+// ── LIMPIAR ──────────────────────────────────────────────────
+function limpiar() {
+  punchState = Array.from({length: NUM_ROWS}, () => new Array(NUM_COLS).fill(false));
+  for (let r = 0; r < NUM_ROWS; r++)
+    for (let c = 0; c < NUM_COLS; c++)
+      updateHoleUI(r, c, false);
+  for (let c = 0; c < NUM_COLS; c++) {
+    const tc = document.getElementById(`tc-${c}`);
+    if (tc) tc.textContent = ' ';
+  }
+  document.getElementById('texto-input').value = '';
+  document.getElementById('char-counter').textContent = '0 / 80';
+  document.getElementById('binary-output').innerHTML = '<span style="color:var(--text-dim)">[ En espera de entrada... ]</span>';
+  document.getElementById('hollerith-tbody').innerHTML = '';
+  document.getElementById('decode-output').textContent = '_';
+  document.getElementById('hdr-cols').textContent = 'COLS: 00/80';
+  currentText = '';
+  showToast('TARJETA LIMPIADA');
+}
+
+// ── DECODE FROM CARD ─────────────────────────────────────────
+function decodeFromCard() {
+  // Reverse Hollerith: build lookup from row-pattern -> char
+  const reverseMap = {};
+  for (const [ch, rows] of Object.entries(HOLLERITH)) {
+    const key = rows.slice().sort((a,b)=>a-b).join(',');
+    reverseMap[key] = ch;
+  }
+
+  let decoded = '';
+  for (let c = 0; c < NUM_COLS; c++) {
+    const punchedRows = [];
+    for (let r = 0; r < NUM_ROWS; r++) {
+      if (punchState[r][c]) punchedRows.push(r);
+    }
+    if (punchedRows.length === 0) {
+      // Check if any column before has data
+      const hasData = punchState.flat().some(Boolean);
+      if (hasData && c < currentText.length) decoded += ' ';
+      continue;
+    }
+    const key = punchedRows.sort((a,b)=>a-b).join(',');
+    decoded += reverseMap[key] || '?';
+  }
+
+  document.getElementById('decode-output').textContent = decoded.trimEnd() || '_';
+  document.getElementById('decode-output').classList.add('fade-in');
+  setTimeout(() => document.getElementById('decode-output').classList.remove('fade-in'), 300);
+}
+
+// ── BINARY OUTPUT ────────────────────────────────────────────
+function updateBinaryOutput() {
+  const el = document.getElementById('binary-output');
+  let html = '';
+  const text = decodeText();
+  if (!text) { el.innerHTML = '<span style="color:var(--text-dim)">[ En espera de entrada... ]</span>'; return; }
+
+  for (let c = 0; c < text.length; c++) {
+    const ch = text[c];
+    const ascii = ch.charCodeAt(0);
+    const bin = ascii.toString(2).padStart(8, '0');
+    const hex = ascii.toString(16).toUpperCase().padStart(2,'0');
+    html += `<span style="color:var(--green-dim)">[${c+1}]</span> `;
+    html += `<span style="color:var(--amber)">'${ch}'</span> `;
+    html += `<span style="color:var(--text-dim)">DEC:${ascii} HEX:${hex}</span> `;
+    html += `<span style="color:var(--cyan)">${bin}</span><br>`;
+  }
+  el.innerHTML = html;
+}
+
+// ── HOLLERITH TABLE ──────────────────────────────────────────
+function updateHollerithTable() {
+  const tbody = document.getElementById('hollerith-tbody');
+  const text = decodeText();
+  if (!text) { tbody.innerHTML = ''; return; }
+
+  let html = '';
+  for (let c = 0; c < text.length; c++) {
+    const ch = text[c];
+    const rows = HOLLERITH[ch] || [];
+    const rowNames = rows.map(r => ROW_LABELS[r]);
+    const ascii = ch.charCodeAt(0);
+    const bin = ascii.toString(2).padStart(8,'0');
+    html += `<tr class="fade-in">
+      <td class="col-char">${ch === ' ' ? '⎵' : ch}</td>
+      <td class="col-ascii">${ascii}</td>
+      <td class="col-hollerith">${rowNames.length ? rowNames.join(' + ') : '(vacío)'}</td>
+      <td class="col-binary">${bin}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+// ── DECODE TEXT FROM PUNCH STATE ─────────────────────────────
+function decodeText() {
+  const reverseMap = {};
+  for (const [ch, rows] of Object.entries(HOLLERITH)) {
+    const key = rows.slice().sort((a,b)=>a-b).join(',');
+    reverseMap[key] = ch;
+  }
+  let text = '';
+  let lastChar = 0;
+  for (let c = 0; c < NUM_COLS; c++) {
+    const punchedRows = [];
+    for (let r = 0; r < NUM_ROWS; r++) {
+      if (punchState[r][c]) punchedRows.push(r);
+    }
+    if (punchedRows.length === 0) continue;
+    const key = punchedRows.sort((a,b)=>a-b).join(',');
+    const ch = reverseMap[key] || '?';
+    // Fill spaces
+    while (text.length < c) text += ' ';
+    text += ch;
+    lastChar = c + 1;
+  }
+  return text.slice(0, lastChar);
+}
+
+// ── EXPORTAR ─────────────────────────────────────────────────
+function exportar() {
+  const text = decodeText();
+  if (!text) { showToast('NADA QUE EXPORTAR'); return; }
+
+  let output = '══════════════════════════════════════════════════════════════════════════════════\n';
+  output += '  SIMULADOR DE TARJETA PERFORADA IBM 80 COLUMNAS\n';
+  output += '  Johan Silva · Julián Beltrán · Diego Plata | Marzo 2026\n';
+  output += '══════════════════════════════════════════════════════════════════════════════════\n\n';
+
+  output += 'TEXTO CODIFICADO:\n  "' + text + '"\n\n';
+
+  output += 'PATRON DE PERFORACIONES:\n\n';
+  ROW_LABELS.forEach((lbl, r) => {
+    const row = punchState[r].map(p => p ? '█' : '·').join('');
+    output += `  ${lbl.padEnd(6)} | ${row}\n`;
+  });
+  output += '         | ' + Array.from({length:80},(_,i)=>(i+1)%10||'|').join('') + '\n\n';
+
+  output += 'CODIFICACION BINARIA (ASCII):\n';
+  for (let c = 0; c < text.length; c++) {
+    const ch = text[c];
+    const ascii = ch.charCodeAt(0);
+    const bin = ascii.toString(2).padStart(8,'0');
+    const hex = ascii.toString(16).toUpperCase().padStart(2,'0');
+    output += `  Col ${String(c+1).padStart(2)} | '${ch}' | DEC:${String(ascii).padStart(3)} | HEX:${hex} | BIN:${bin}\n`;
+  }
+
+  const blob = new Blob([output], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'tarjeta_perforada_ibm80.txt';
+  a.click();
+  showToast('EXPORTADO: tarjeta_perforada_ibm80.txt');
+}
+
+// ── HEADER UPDATE ────────────────────────────────────────────
+function updateHeader(n) {
+  document.getElementById('hdr-cols').textContent = `COLS: ${String(n).padStart(2,'0')}/80`;
+  document.getElementById('hdr-mode').textContent = `CHARS: ${n}`;
+}
+
+// ── TOAST ────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ── INPUT LISTENER ───────────────────────────────────────────
+document.getElementById('texto-input').addEventListener('input', function() {
+  const len = this.value.length;
+  const counter = document.getElementById('char-counter');
+  counter.textContent = `${len} / 80`;
+  counter.className = len > 75 ? 'over' : '';
+});
+
+document.getElementById('texto-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') perforar();
+});
+
+// ── INIT ─────────────────────────────────────────────────────
+buildCard();
+
+// Demo: punch a welcome message
+setTimeout(() => {
+  document.getElementById('texto-input').value = 'HOLA MUNDO - IBM 1928';
+  document.getElementById('char-counter').textContent = '21 / 80';
+  perforar();
+}, 600);
+</script>
+</body>
+</html>
